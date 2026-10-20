@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite the paper."
+title: "Input resolution versus a stride-4 detection head: Accuracy, latency and energy of YOLO11n-based traffic sign detection on the NVIDIA Jetson Xavier NX"
+authors:
+  - family-names: Tang
+    given-names: Keyuan
+    affiliation: "School of Electronic Information Engineering, Yibin University; Sichuan Provincial University Engineering Research Center of Electromagnetic Reliability Testing for Intelligent Terminals, Yibin University"
+  - family-names: Du
+    given-names: Zhengcong
+    affiliation: "School of Electronic Information Engineering, Yibin University; Sichuan Provincial University Engineering Research Center of Electromagnetic Reliability Testing for Intelligent Terminals, Yibin University"
+  - family-names: Liu
+    given-names: Chuanli
+    affiliation: "School of Mechanical and Electrical Engineering, Yibin University"
+  - family-names: Wen
+    given-names: Lianghua
+    affiliation: "School of Electronic Information Engineering, Yibin University; Sichuan Provincial University Engineering Research Center of Electromagnetic Reliability Testing for Intelligent Terminals, Yibin University"
+  - family-names: Sun
+    given-names: Fengping
+    affiliation: "School of Electronic Information Engineering, Yibin University; Sichuan Provincial University Engineering Research Center of Electromagnetic Reliability Testing for Intelligent Terminals, Yibin University"
+  - family-names: Song
+    given-names: Rui
+    affiliation: "School of Electronic Information Engineering, Yibin University; Sichuan Provincial University Engineering Research Center of Electromagnetic Reliability Testing for Intelligent Terminals, Yibin University"
+  - family-names: Luo
+    given-names: Chunlan
+    affiliation: "School of Electronic Information Engineering, Yibin University; Sichuan Provincial University Engineering Research Center of Electromagnetic Reliability Testing for Intelligent Terminals, Yibin University"
+license: AGPL-3.0
+repository-code: "https://github.com/jucken58/EdgeTS-YOLO"

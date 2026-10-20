@@ -1,0 +1,210 @@
+diff -ruN --exclude=__pycache__ --exclude=.DS_Store a/ultralytics/cfg/__init__.py b/ultralytics/cfg/__init__.py
+--- a/ultralytics/cfg/__init__.py	2026-10-13 13:28:02
++++ b/ultralytics/cfg/__init__.py	2026-10-08 22:58:13
+@@ -202,6 +202,7 @@
+ # Define keys for arg type checks
+ CFG_FLOAT_KEYS = frozenset(
+     {  # integer or float arguments, i.e. x=2 and x=2.0
++        "nwd_c",  # EdgeTS-YOLO
+         "warmup_epochs",
+         "box",
+         "cls",
+@@ -222,6 +223,7 @@
+ )
+ CFG_FRACTION_KEYS = frozenset(
+     {  # fractional floats use [0.0, 1.0]; dataset fraction also accepts positive counts and split pairs
++        "nwd_alpha",  # EdgeTS-YOLO
+         "dropout",
+         "lr0",
+         "lrf",
+diff -ruN --exclude=__pycache__ --exclude=.DS_Store a/ultralytics/cfg/default.yaml b/ultralytics/cfg/default.yaml
+--- a/ultralytics/cfg/default.yaml	2026-10-13 13:28:02
++++ b/ultralytics/cfg/default.yaml	2026-10-08 22:58:13
+@@ -104,6 +104,8 @@
+ cls: 0.5 # (float) classification loss gain
+ cls_pw: 0.0 # (float) class weights power for handling class imbalance (0.0=disable, 1.0=full inverse frequency)
+ dfl: 1.5 # (float) box distance loss gain (DFL when reg_max > 1, L1 on DFL-free YOLO26)
++nwd_alpha: 0.0 # (float) EdgeTS-YOLO: weight a of the NWD term in L_box = a*(1-NWD) + (1-a)*(1-CIoU); 0 = original CIoU loss
++nwd_c: 14.26 # (float) EdgeTS-YOLO: NWD constant C in pixels (TT100K45 train set: mean sqrt(w*h) at 640 input = 14.26)
+ pose: 12.0 # (float) pose loss gain (pose tasks)
+ kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
+ rle: 1.0 # (float) rle loss gain (pose tasks)
+diff -ruN --exclude=__pycache__ --exclude=.DS_Store a/ultralytics/nn/modules/__init__.py b/ultralytics/nn/modules/__init__.py
+--- a/ultralytics/nn/modules/__init__.py	2026-10-13 13:28:02
++++ b/ultralytics/nn/modules/__init__.py	2026-10-09 19:24:13
+@@ -107,7 +107,11 @@
+     TransformerLayer,
+ )
+ 
++from .coordatt import CoordAtt, CoordAttRes  # EdgeTS-YOLO addition
++
+ __all__ = (
++    "CoordAtt",
++    "CoordAttRes",
+     "AIFI",
+     "C1",
+     "C2",
+diff -ruN --exclude=__pycache__ --exclude=.DS_Store a/ultralytics/nn/modules/coordatt.py b/ultralytics/nn/modules/coordatt.py
+--- a/ultralytics/nn/modules/coordatt.py	1970-01-01 07:30:00
++++ b/ultralytics/nn/modules/coordatt.py	2026-10-09 19:24:13
+@@ -0,0 +1,63 @@
++# EdgeTS-YOLO addition (not part of upstream Ultralytics 8.4.166).
++"""Coordinate Attention (Hou, Zhou & Feng, CVPR 2021, https://arxiv.org/abs/2103.02907)."""
++
++from __future__ import annotations  # Python 3.8 (Jetson NX) compatibility for `int | None`
++
++import torch
++import torch.nn as nn
++
++__all__ = ("CoordAtt", "CoordAttRes")
++
++
++class CoordAtt(nn.Module):
++    """Coordinate attention block.
++
++    Global pooling is factorised into two 1-D poolings along H and W. The two direction-aware descriptors are
++    concatenated, passed through a shared 1x1 conv + BN + Hardswish with reduction ratio r, split again, and turned
++    into two sigmoid gates g^h (C x H x 1) and g^w (C x 1 x W). Output: y = x * g^h * g^w (same shape as x).
++    Only pooling, 1x1 conv, BN, Hardswish, sigmoid and element-wise products are used (all TensorRT-native).
++
++    Args:
++        c1 (int): input channels (inserted automatically by parse_model).
++        c2 (int | None): output channels; must equal c1 (kept only for YAML symmetry).
++        reduction (int): channel reduction ratio r; hidden width = max(8, c1 // r) as in the original paper.
++    """
++
++    def __init__(self, c1: int, c2: int | None = None, reduction: int = 32):
++        super().__init__()
++        assert c2 is None or c2 == c1, f"CoordAtt keeps the channel count (c1={c1}, c2={c2})"
++        mip = max(8, c1 // reduction)
++        self.conv1 = nn.Conv2d(c1, mip, 1, 1, 0)
++        self.bn1 = nn.BatchNorm2d(mip)
++        self.act = nn.Hardswish()
++        self.conv_h = nn.Conv2d(mip, c1, 1, 1, 0)
++        self.conv_w = nn.Conv2d(mip, c1, 1, 1, 0)
++
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """Apply coordinate attention to x of shape (N, C, H, W)."""
++        _, _, h, w = x.shape
++        x_h = x.mean(dim=3, keepdim=True)  # (N, C, H, 1)  -- pooling along width
++        x_w = x.mean(dim=2, keepdim=True).permute(0, 1, 3, 2)  # (N, C, W, 1) -- pooling along height
++        y = self.act(self.bn1(self.conv1(torch.cat([x_h, x_w], dim=2))))
++        y_h, y_w = torch.split(y, [h, w], dim=2)
++        a_h = self.conv_h(y_h).sigmoid()  # (N, C, H, 1)
++        a_w = self.conv_w(y_w.permute(0, 1, 3, 2)).sigmoid()  # (N, C, 1, W)
++        return x * a_h * a_w
++
++
++class CoordAttRes(CoordAtt):
++    """Residual, identity-initialised coordinate attention (EdgeTS-YOLO variant A3b).
++
++    y = x + gamma * (x * g^h * g^w), with a per-channel scale gamma initialised to 0 (ReZero / LayerScale style).
++    At initialisation the block is exactly the identity, so inserting it between COCO-pretrained neck and head does not
++    perturb the pretrained features (plain CoordAtt multiplies them by ~0.25 at start); training decides how much
++    attention to add. Same TensorRT-native operators as CoordAtt plus one Mul and one Add.
++    """
++
++    def __init__(self, c1: int, c2: int | None = None, reduction: int = 32):
++        super().__init__(c1, c2, reduction)
++        self.gamma = nn.Parameter(torch.zeros(1, c1, 1, 1))
++
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """Return x + gamma * CA(x)."""
++        return x + self.gamma * super().forward(x)
+diff -ruN --exclude=__pycache__ --exclude=.DS_Store a/ultralytics/nn/tasks.py b/ultralytics/nn/tasks.py
+--- a/ultralytics/nn/tasks.py	2026-10-13 13:28:02
++++ b/ultralytics/nn/tasks.py	2026-10-09 19:24:13
+@@ -17,6 +17,8 @@
+ from ultralytics.nn.autobackend import check_class_names
+ from ultralytics.nn.modules import (
+     AIFI,
++    CoordAtt,
++    CoordAttRes,
+     C1,
+     C2,
+     C2PSA,
+@@ -2229,6 +2231,9 @@
+             args = [c1, c2, *args[1:]]
+         elif m is CBFuse:
+             c2 = ch[f[-1]]
++        elif m in {CoordAtt, CoordAttRes}:  # EdgeTS-YOLO: channel-preserving attention, c1 inserted from the input layer
++            c1 = c2 = ch[f]
++            args = [c1, None, *args]
+         elif m in frozenset({TorchVision, Index}):
+             c2 = args[0]
+             c1 = ch[f]
+diff -ruN --exclude=__pycache__ --exclude=.DS_Store a/ultralytics/utils/loss.py b/ultralytics/utils/loss.py
+--- a/ultralytics/utils/loss.py	2026-10-13 13:28:02
++++ b/ultralytics/utils/loss.py	2026-10-08 22:58:13
+@@ -108,13 +108,42 @@
+         ).mean(-1, keepdim=True)
+ 
+ 
++def wasserstein_similarity(box1: torch.Tensor, box2: torch.Tensor, c: float, eps: float = 1e-7) -> torch.Tensor:
++    """Normalized Gaussian Wasserstein Distance (NWD) between paired xyxy boxes (EdgeTS-YOLO addition).
++
++    Each box is modelled as N((cx, cy), diag(w^2/4, h^2/4)); then
++    W2^2 = ||[cx1, cy1, w1/2, h1/2] - [cx2, cy2, w2/2, h2/2]||^2 and NWD = exp(-sqrt(W2^2) / c).
++
++    Args:
++        box1, box2 (torch.Tensor): (n, 4) boxes in xyxy pixel coordinates.
++        c (float): normalising constant in pixels (dataset-dependent).
++
++    Returns:
++        (torch.Tensor): (n, 1) similarity in (0, 1].
++    """
++    box1, box2 = box1.float(), box2.float()
++    cx1, cy1 = (box1[:, 0] + box1[:, 2]) / 2, (box1[:, 1] + box1[:, 3]) / 2
++    cx2, cy2 = (box2[:, 0] + box2[:, 2]) / 2, (box2[:, 1] + box2[:, 3]) / 2
++    w1, h1 = box1[:, 2] - box1[:, 0], box1[:, 3] - box1[:, 1]
++    w2, h2 = box2[:, 2] - box2[:, 0], box2[:, 3] - box2[:, 1]
++    w2_sq = (cx1 - cx2) ** 2 + (cy1 - cy2) ** 2 + ((w1 - w2) ** 2 + (h1 - h2) ** 2) / 4
++    return torch.exp(-torch.sqrt(w2_sq + eps) / c).unsqueeze(-1)
++
++
+ class BboxLoss(nn.Module):
+     """Criterion class for computing training losses for bounding boxes."""
+ 
+-    def __init__(self, reg_max: int = 16):
+-        """Initialize the BboxLoss module; DFL is used when reg_max > 1, otherwise an L1 distance loss."""
++    def __init__(self, reg_max: int = 16, nwd_alpha: float = 0.0, nwd_c: float = 14.26):
++        """Initialize the BboxLoss module; DFL is used when reg_max > 1, otherwise an L1 distance loss.
++
++        EdgeTS-YOLO: nwd_alpha > 0 enables the hybrid box loss L_box = a*(1 - NWD) + (1 - a)*(1 - CIoU)
++        (Wang et al., arXiv:2110.13389). nwd_alpha = 0 (default) runs exactly the original CIoU code path.
++        nwd_c is the NWD normalising constant in input-image pixels.
++        """
+         super().__init__()
+         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
++        self.nwd_alpha = float(nwd_alpha)
++        self.nwd_c = float(nwd_c)
+ 
+     def forward(
+         self,
+@@ -132,7 +161,13 @@
+         fg_mask = fg_mask.nonzero(as_tuple=True)  # index once; long-index gathers and their backward do not sync
+         weight = target_scores[fg_mask].sum(-1, keepdim=True)
+         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
+-        loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
++        if self.nwd_alpha > 0:  # EdgeTS-YOLO hybrid NWD-CIoU loss
++            s = stride[fg_mask[1]]  # (n, 1): boxes here are in grid units of their own stride -> back to pixels
++            nwd = wasserstein_similarity(pred_bboxes[fg_mask] * s, target_bboxes[fg_mask] * s, self.nwd_c)
++            loss_iou = ((self.nwd_alpha * (1.0 - nwd) + (1.0 - self.nwd_alpha) * (1.0 - iou)) * weight).sum()
++            loss_iou = loss_iou / target_scores_sum
++        else:
++            loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+ 
+         # DFL loss
+         if self.dfl_loss:
+@@ -379,7 +414,10 @@
+             stride=self.stride.tolist(),
+             topk2=tal_topk2,
+         )
+-        self.bbox_loss = BboxLoss(m.reg_max).to(device)
++        hget = h.get if isinstance(h, dict) else (lambda k, d=None: getattr(h, k, d))  # EdgeTS-YOLO
++        self.bbox_loss = BboxLoss(
++            m.reg_max, nwd_alpha=float(hget("nwd_alpha", 0.0) or 0.0), nwd_c=float(hget("nwd_c", 14.26) or 14.26)
++        ).to(device)
+         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
+ 
+     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:

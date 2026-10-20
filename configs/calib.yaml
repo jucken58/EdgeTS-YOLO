@@ -1,0 +1,4 @@
+# INT8 calibration set for build_trt.py: 500 TRAINING images of TT100K45, random.Random(0).shuffle(sorted train list)[:500].
+# Never uses validation or test images. File list: calib_train500_seed0.txt (basenames in images/train).
+nc: 45
+calib_list: calib_train500_seed0.txt

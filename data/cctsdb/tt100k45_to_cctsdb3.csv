@@ -1,0 +1,46 @@
+tt100k_class,cctsdb_superclass,cctsdb_category_id,rule,note
+i2,mandatory,1,prefix i,
+i4,mandatory,1,prefix i,
+i5,mandatory,1,prefix i,
+il100,mandatory,1,prefix i,minimum speed (indication sign in GB 5768)
+il60,mandatory,1,prefix i,minimum speed
+il80,mandatory,1,prefix i,minimum speed
+io,mandatory,1,prefix i,other indication signs
+ip,mandatory,1,prefix i,pedestrian crossing
+p10,prohibitory,2,prefix p,
+p11,prohibitory,2,prefix p,
+p12,prohibitory,2,prefix p,
+p19,prohibitory,2,prefix p,
+p23,prohibitory,2,prefix p,
+p26,prohibitory,2,prefix p,
+p27,prohibitory,2,prefix p,
+p3,prohibitory,2,prefix p,
+p5,prohibitory,2,prefix p,
+p6,prohibitory,2,prefix p,
+pg,prohibitory,2,prefix p,yield (prohibitory class in GB 5768)
+ph4,prohibitory,2,prefix p,height limit
+ph4.5,prohibitory,2,prefix p,height limit
+ph5,prohibitory,2,prefix p,height limit
+pl100,prohibitory,2,prefix p,speed limit
+pl120,prohibitory,2,prefix p,speed limit
+pl20,prohibitory,2,prefix p,speed limit
+pl30,prohibitory,2,prefix p,speed limit
+pl40,prohibitory,2,prefix p,speed limit
+pl5,prohibitory,2,prefix p,speed limit
+pl50,prohibitory,2,prefix p,speed limit
+pl60,prohibitory,2,prefix p,speed limit
+pl70,prohibitory,2,prefix p,speed limit
+pl80,prohibitory,2,prefix p,speed limit
+pm20,prohibitory,2,prefix p,weight limit
+pm30,prohibitory,2,prefix p,weight limit
+pm55,prohibitory,2,prefix p,weight limit
+pn,prohibitory,2,prefix p,no parking
+pne,prohibitory,2,prefix p,no entry
+po,prohibitory,2,prefix p,other prohibitory signs
+pr40,prohibitory,2,prefix p,end of speed limit (prohibitory class in GB 5768)
+w13,warning,3,prefix w,
+w32,warning,3,prefix w,
+w55,warning,3,prefix w,
+w57,warning,3,prefix w,
+w59,warning,3,prefix w,
+wo,warning,3,prefix w,other warning signs
